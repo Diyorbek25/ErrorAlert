@@ -1,4 +1,6 @@
 using ErrorAlert.Api.Filters;
+using ErrorAlert.Api.SendErrorMessageService;
+using Telegram.Bot;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -11,6 +13,11 @@ builder.Services.AddControllers(options =>
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+
+builder.Services.AddScoped<ISendErrorMessageService, SendErrorMessageService>();
+builder.Services
+    .AddSingleton<ITelegramBotClient, TelegramBotClient>
+    (serviceProvider => new TelegramBotClient(builder.Configuration.GetValue<string>("TelegramBot:ApiKey")));
 
 var app = builder.Build();
 

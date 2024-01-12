@@ -1,54 +1,64 @@
-﻿using Microsoft.AspNetCore.Mvc.Filters;
+﻿using ErrorAlert.Api.Models;
+using ErrorAlert.Api.SendErrorMessageService;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Filters;
+using System.Net;
 using System.Text.Json;
 
 namespace ErrorAlert.Api.Filters
 {
-    public class LogAttribute : IActionFilter
+    public class LogAttribute : Attribute, IAsyncActionFilter
     {
-        private string ipAddress;
-        private int port;
-        private HttpRequest? request;
-        private HttpResponse response;
-        private string? methodType;
-        private int? companyId;
-        private int? userId;
-        private bool isCoorporateOrg = false;
-        private string? controllerName;
-        private string? actionName;
-        private string? requestBody;
-        private string? requestHeader;
+        private ActionLog actionLog;
+        private ISendErrorMessageService sendErrorMessageService;
 
+        public LogAttribute(ISendErrorMessageService sendErrorMessageService)
+        {
+            this.sendErrorMessageService = sendErrorMessageService;
+            actionLog = new ActionLog();
+        }
         public void OnActionExecuting(ActionExecutingContext context)
         {
             var httpContect = context.HttpContext;
-            var user = httpContect?.User;
+            var request = httpContect?.Request;
 
-            controllerName = httpContect?.GetRouteValue("controller")?.ToString();
-            actionName = httpContect?.GetRouteValue("action")?.ToString();
-
-            request = httpContect?.Request;
-            methodType = request?.Method;
-
-            requestBody = JsonSerializer.Serialize(context.ActionArguments);
-            requestHeader = JsonSerializer.Serialize(request.Headers);
+            actionLog.IpAddress = httpContect?.Connection?.RemoteIpAddress?.ToString();
+            actionLog.Port = httpContect?.Connection?.RemotePort ?? default;
+            actionLog.Controller = httpContect?.GetRouteValue("controller")?.ToString();
+            actionLog.Action = httpContect?.GetRouteValue("action")?.ToString();
+            actionLog.MethodType = request?.Method;
+            actionLog.RequestData = JsonSerializer.Serialize(context.ActionArguments);
+            actionLog.RequestHeader = JsonSerializer.Serialize(request.Headers);
         }
 
-        public void OnActionExecuted(ActionExecutedContext context)
+        public async Task OnActionExecutedAsync(ActionExecutedContext context)
         {
-            var response = context.HttpContext.Response;
+            var response = context?.HttpContext?.Response;
             Exception? exception = context?.Exception;
 
             try
             {
-                var result = context?.Result;
+                var result = (ObjectResult?)context?.Result;
+                var responseResult = (Response?)result?.Value;
+                actionLog.ResponseData = JsonSerializer.Serialize(result);
+                actionLog.StatusCode = (HttpStatusCode?)response?.StatusCode;
 
-
+                if ((int?)actionLog.StatusCode >= 500)
+                {
+                    this.sendErrorMessageService.SendErrorMessageAsync(actionLog).Wait();
+                }
             }
             catch (Exception ex)
             {
-                Console.WriteLine(ex.Message);
+                actionLog.Exception = $"{actionLog.Exception} - ActionFilterError: {ex.Message}";
+                this.sendErrorMessageService.SendErrorMessageAsync(actionLog).Wait();
             }
         }
 
+        public async Task OnActionExecutionAsync(ActionExecutingContext context, ActionExecutionDelegate next)
+        {
+            OnActionExecuting(context);
+            await OnActionExecutedAsync(await next());
+        }
     }
 }
